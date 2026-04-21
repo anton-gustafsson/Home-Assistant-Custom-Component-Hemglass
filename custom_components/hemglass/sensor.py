@@ -1,323 +1,130 @@
 """Platform for sensor integration."""
-import urllib.request, json, asyncio, hashlib, requests
-from datetime import timedelta
-from urllib import request
-from datetime import datetime
-from pytz import timezone
-import voluptuous as vol
-import homeassistant.helpers.config_validation as cv
+from datetime import date
 
-from homeassistant.components.sensor import PLATFORM_SCHEMA
-from homeassistant.const import (
-    CONF_NAME
-)
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.entity import Entity
-from homeassistant.util import Throttle
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .coordinator import HemglassCoordinator, DOMAIN
 
-DOMAIN = "hemglass"
-
-CONF_LAT = "latitude"
-CONF_LONG = "longitude"
-
-MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=5)
-
-SCAN_INTERVAL = timedelta(minutes=5)
-
-PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
-    {
-        vol.Required(CONF_NAME): cv.string,
-        vol.Required(CONF_LAT): cv.string,
-        vol.Required(CONF_LONG): cv.string,
-    }
-)
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Add sensors for passed config_entry in HA."""
-    session = async_get_clientsession(hass)
-    config = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator: HemglassCoordinator = hass.data[DOMAIN][config_entry.entry_id]
+    name = config_entry.data["name"]
+    async_add_entities([
+        HemglassSensor(coordinator, name),
+        HemglassTruckSensor(coordinator, name),
+        HemglassDaysUntilSensor(coordinator, name),
+    ])
 
-    latitude = config[0]
-    longitude = config[1]
-    name = config[2]
-    routeId = config[3]
 
-    async_add_entities([HemglassSensor(name, float(latitude), float(longitude)),HemglassTruckSensor((name + " Truck"), str(routeId))], update_before_add=True)
+class HemglassSensor(CoordinatorEntity, Entity):
 
-async def get_nearest_stop(session, latitude, longitude):    
-
-    searchRange = 10 * 0.008999
-    minLat = float(latitude) - searchRange
-    maxLat = float(latitude) + searchRange
-    minLong = float(longitude) - searchRange
-    maxLong = float(longitude) + searchRange
-
-    url = "https://iceman-prod.azurewebsites.net/api/tracker/getNearestStops?minLong=" + str(minLong) + "&minLat=" + str(minLat) + "&maxLong=" + str(maxLong) + "&maxLat=" + str(maxLat) + "&limit=1"
-    async with session.get(url) as resp:
-        data = await resp.json()
-        return replace_nulls_with_empty_string(data['data'][0])
-
-async def get_sales_info(session, stopId):
-    url = "https://iceman-prod.azurewebsites.net/api/tracker/getSalesInfoByStop?stopId=" + str(stopId)
-    async with session.get(url) as resp:
-        data = await resp.json()
-        return replace_nulls_with_empty_string(data['data'])
-
-async def get_eta(session, stopId, routeId):
-    url = "https://iceman-prod.azurewebsites.net/api/tracker/stopsEta?stopId=" + str(stopId) + "&routeId=" + str(routeId)
-    async with session.get(url) as resp:
-        data = await resp.json()
-        if data['data'] != "":
-
-            date = datetime.now().strftime("%Y-%m-%d")
-            date_string = date + " " + data['data'] + " +0000"
-            datetime_obj = datetime.strptime(date_string, '%Y-%m-%d %H:%M:%S %z')
-            etaStockholmTime = datetime_obj.astimezone(timezone('Europe/Stockholm'))
-
-            return etaStockholmTime
-        else:
-            return ""
-
-async def get_depot_info(session, routeId):
-    url = "https://iceman-prod.azurewebsites.net/api/tracker/depotInfo/" + str(routeId)
-    async with session.get(url) as resp:
-        data = await resp.json()
-
-        if data['statusCode'] == 200:
-            return replace_nulls_with_empty_string(data['data'])
-        else:
-            return None
-
-async def get_live_route_info(session, routeId):
-    url = "https://iceman-prod.azurewebsites.net/api/tracker/liverouteinfo/" + str(routeId)
-    async with session.get(url) as resp:
-        data = await resp.json()
-
-        if data['statusCode'] == 200:
-
-            date = datetime.now().strftime("%Y-%m-%d")
-            date_string = date + " " + data['data']['indices'][0]['time'] + " +0000"
-            datetime_obj = datetime.strptime(date_string, '%Y-%m-%d %H:%M:%S %z')
-            time = datetime_obj.astimezone(timezone('Europe/Stockholm'))
-            data['data']['indices'][0]['time'] = time.strftime('%H:%M:%S')
-            return replace_nulls_with_empty_string(data['data'])
-
-        else:
-            return None
-
-async def get_route_forecast(session, routeId):
-    url = "https://iceman-prod.azurewebsites.net/api/tracker/routeforecast/" + str(routeId)
-    async with session.get(url) as resp:
-        data = await resp.json()
-
-        if data['statusCode'] == 200:
-            return replace_nulls_with_empty_string(data['data'])
-        else:
-            return None
-
-def replace_nulls_with_empty_string(obj):
-    if isinstance(obj, dict):
-        for key, value in obj.items():
-            if value is None:
-                obj[key] = ""
-            else:
-                replace_nulls_with_empty_string(value)
-    elif isinstance(obj, list):
-        for i, item in enumerate(obj):
-            if item is None:
-                obj[i] = ""
-            else:
-                replace_nulls_with_empty_string(item)
-    return obj
-
-class HemglassSensor(Entity):
-    """Representation of a Sensor."""
-
-    def __init__(self, sensor_name, sensor_home_latitude, sensor_home_longitude):
-        """Initialize the sensor."""
-
-        self._attr_unique_id = f"{DOMAIN}_{sensor_name}_{sensor_home_latitude}_{sensor_home_longitude}"
-
-        self._state = None
-        self._attr_routeId = None
-        self._name = sensor_name
-        self._homeLat = sensor_home_latitude
-        self._homeLong = sensor_home_longitude
-
+    def __init__(self, coordinator: HemglassCoordinator, name: str):
+        super().__init__(coordinator)
+        d = coordinator.data
+        self._attr_unique_id = f"{DOMAIN}_{name}_{d['stopLat']}_{d['stopLong']}"
+        self._name = name
         self._icon = "mdi:calendar"
 
     @property
     def name(self):
-        """Return the name of the sensor."""
         return self._name
 
     @property
     def state(self):
-        """Return the state of the sensor."""
-        return self._state
-
-    @property
-    def extra_state_attributes(self):
-        if self._attr_stopLat is not None:
-            attributes = {
-                "latitude" : self._attr_stopLat,
-                "longitude" : self._attr_stopLong,
-                "streetAddress": self._attr_streetAddress,
-                "city": self._attr_city,
-                "time" : self._attr_nextTime,
-                "ETA" : self._attr_eta,
-                "salesman" : self._attr_salesMan,
-                "depot" : self._attr_depotName,
-                "email" : self._attr_depotEmail,
-                "comment" : self._attr_comment,
-                "canceled" : self._attr_cancelled,
-                "canceledMessage" : self._attr_cancelledMessage,
-                "truckIsActiveToday" : self._attr_truckIsActiveToday,
-                "truckLocationUpdated" : self._attr_truckLocationUpdated,
-                "truckLatitude" : self._attr_truckLatitude,
-                "truckLongitude" : self._attr_truckLongitude,
-                "truckIsOffTrack" : self._attr_truckIsOffTrack,
-                "routeID" : self._attr_routeId
-            }
-        else:
-            attributes = {}
-        if hasattr(self, "add_state_attributes"):
-            attributes = {**attributes, **self.add_state_attributes}
-        return attributes
+        next_date = self.coordinator.data.get("nextDate", "")
+        return next_date.split("T")[0] if next_date else None
 
     @property
     def icon(self):
-        """Icon to use in the frontend."""
         return self._icon
 
-    @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    async def async_update(self) -> None:
-        """Get the latest data and updates the states."""
-        session = async_get_clientsession(self.hass)
-
-        nearestStop = await get_nearest_stop(session, self._homeLat, self._homeLong)
-        self._attr_stopId = nearestStop['stopId']
-        self._attr_stopLat = nearestStop['latitude']
-        self._attr_stopLong = nearestStop['longitude']
-        self._attr_nextDate = nearestStop['nextDate']
-        self._attr_nextTime = nearestStop['nextTime']
-        self._attr_routeId = nearestStop['routeId']
-
-        salesInfo = await get_sales_info(session, self._attr_stopId)
-
-        self._attr_salesMan = salesInfo['salesmanName']
-        self._attr_phoneNumber = salesInfo['phoneNumber']
-        self._attr_depotName = salesInfo['depotName'].capitalize()
-        self._attr_depotEmail = salesInfo['depotEmail']
-        self._attr_streetAddress = salesInfo['streetAddress'].capitalize()
-        self._attr_city = salesInfo['city'].capitalize()
-        self._attr_comment = salesInfo['comment']
-        self._attr_cancelled = salesInfo['cancelled']
-        self._attr_cancelledMessage = salesInfo['cancelledMessage']
-        if self._attr_cancelledMessage is None:
-            self._attr_cancelledMessage = ""
-
-        etaInfo = await get_eta(session, self._attr_stopId, self._attr_routeId)
-        self._attr_eta = etaInfo
-
-        liveRouteInfo = await get_live_route_info(session, self._attr_routeId)
-        if liveRouteInfo is not None:
-            self._attr_truckIsActiveToday= True
-
-            forecast = await get_route_forecast(session, self._attr_routeId)
-            cords = (forecast[(int(liveRouteInfo['indices'][0]['index']) - 1)]).split(",")
-            self._attr_truckLatitude = cords[0]
-            self._attr_truckLongitude = cords[1]
-            self._attr_truckLocationUpdated = liveRouteInfo['indices'][0]['time']
-
-            if "isOffTrack" in liveRouteInfo:
-                self._attr_truckIsOffTrack = liveRouteInfo['isOffTrack']
-            else:
-                self._attr_truckIsOffTrack = ""
-
-        else:
-            self._attr_truckIsActiveToday = False
-            self._attr_truckLatitude = ""
-            self._attr_truckLongitude = ""
-            self._attr_truckLocationUpdated = ""
-            self._attr_truckIsOffTrack = ""
-
-        nextDateSplit = (self._attr_nextDate).split("T")
-        self._state = nextDateSplit[0]
+    @property
+    def extra_state_attributes(self):
+        d = self.coordinator.data
+        return {
+            "latitude": d["stopLat"],
+            "longitude": d["stopLong"],
+            "streetAddress": d["streetAddress"],
+            "city": d["city"],
+            "time": d["nextTime"],
+            "ETA": d["eta"],
+            "salesman": d["salesMan"],
+            "depot": d["depotName"],
+            "email": d["depotEmail"],
+            "comment": d["comment"],
+            "canceled": d["cancelled"],
+            "canceledMessage": d["cancelledMessage"],
+            "truckIsActiveToday": d["truckIsActiveToday"],
+            "truckLocationUpdated": d["truckLocationUpdated"],
+            "truckLatitude": d["truckLatitude"],
+            "truckLongitude": d["truckLongitude"],
+            "truckIsOffTrack": d["truckIsOffTrack"],
+            "routeID": d["routeId"],
+        }
 
 
-class HemglassTruckSensor(Entity):
-    """Representation of a Sensor."""
+class HemglassTruckSensor(CoordinatorEntity, Entity):
 
-    def __init__(self, sensor_name, routeId):
-        """Initialize the sensor."""
-
-        self._attr_unique_id = f"{DOMAIN}_{routeId}_truck"
-        self._state = False
-        self._name = sensor_name
-        self._attr_routeId = routeId
-
+    def __init__(self, coordinator: HemglassCoordinator, name: str):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{DOMAIN}_{coordinator.data['routeId']}_truck"
+        self._name = f"{name} Truck"
         self._icon = "mdi:calendar"
 
     @property
     def name(self):
-        """Return the name of the sensor."""
         return self._name
 
     @property
     def state(self):
-        """Return the state of the sensor."""
-        return self._state
+        return self.coordinator.data.get("truckIsActiveToday", False)
 
     @property
     def icon(self):
-        """Icon to use in the frontend."""
         return self._icon
 
     @property
     def extra_state_attributes(self):
-        if self._attr_truckLatitude is not None:
-            attributes = {
-                "latitude" : self._attr_truckLatitude,
-                "longitude" : self._attr_truckLongitude,
-                "truckIsActiveToday" : self._attr_truckIsActiveToday,
-                "truckLocationUpdated" : self._attr_truckLocationUpdated,
-                "truckIsOffTrack" : self._attr_truckIsOffTrack,
-                "routeID" : self._attr_routeId
-            }
-        else:
-            attributes = {}
-        if hasattr(self, "add_state_attributes"):
-            attributes = {**attributes, **self.add_state_attributes}
-        return attributes
+        d = self.coordinator.data
+        return {
+            "latitude": d["truckLatitude"],
+            "longitude": d["truckLongitude"],
+            "truckIsActiveToday": d["truckIsActiveToday"],
+            "truckLocationUpdated": d["truckLocationUpdated"],
+            "truckIsOffTrack": d["truckIsOffTrack"],
+            "routeID": d["routeId"],
+        }
 
-    @Throttle(MIN_TIME_BETWEEN_UPDATES)
-    async def async_update(self) -> None:
-        """Get the latest data and updates the states."""
 
-        session = async_get_clientsession(self.hass)
+class HemglassDaysUntilSensor(CoordinatorEntity, Entity):
 
-        liveRouteInfo = await get_live_route_info(session, self._attr_routeId)
-        if liveRouteInfo is not None:
-            self._attr_truckIsActiveToday= True
+    def __init__(self, coordinator: HemglassCoordinator, name: str):
+        super().__init__(coordinator)
+        d = coordinator.data
+        self._attr_unique_id = f"{DOMAIN}_{name}_{d['stopLat']}_{d['stopLong']}_days_until"
+        self._name = f"{name} Days Until"
+        self._icon = "mdi:calendar-clock"
 
-            forecast = await get_route_forecast(session, self._attr_routeId)
-            cords = (forecast[(int(liveRouteInfo['indices'][0]['index']) - 1)]).split(",")
-            self._attr_truckLatitude = cords[0]
-            self._attr_truckLongitude = cords[1]
-            self._attr_truckLocationUpdated = liveRouteInfo['indices'][0]['time']
+    @property
+    def name(self):
+        return self._name
 
-            if "isOffTrack" in liveRouteInfo:
-                self._attr_truckIsOffTrack = liveRouteInfo['isOffTrack']
-            else:
-                self._attr_truckIsOffTrack = ""
+    @property
+    def state(self):
+        next_date = self.coordinator.data.get("nextDate", "")
+        if not next_date:
+            return None
+        try:
+            visit = date.fromisoformat(next_date.split("T")[0])
+            return (visit - date.today()).days
+        except ValueError:
+            return None
 
-        else:
-            self._attr_truckIsActiveToday = False
-            self._attr_truckLatitude = ""
-            self._attr_truckLongitude = ""
-            self._attr_truckLocationUpdated = ""
-            self._attr_truckIsOffTrack = ""
+    @property
+    def icon(self):
+        return self._icon
 
-        self._state =  self._attr_truckIsActiveToday
+    @property
+    def unit_of_measurement(self):
+        return "days"
