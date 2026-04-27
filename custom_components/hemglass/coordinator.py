@@ -37,7 +37,10 @@ async def _get_nearest_stop(session, latitude, longitude):
     )
     async with session.get(url) as resp:
         data = await resp.json()
-        return replace_nulls_with_empty_string(data["data"][0])
+        stops = data.get("data", [])
+        if not stops:
+            raise ValueError("No Hemglass stops found near the configured location")
+        return replace_nulls_with_empty_string(stops[0])
 
 
 async def _get_sales_info(session, stop_id):
