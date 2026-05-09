@@ -31,11 +31,13 @@ def replace_nulls_with_empty_string(obj):
 async def _get_nearest_stop(session, latitude, longitude):
     r = 10 * 0.008999
     url = (
-        f"https://iceman-prod.azurewebsites.net/api/tracker/getNearestStops"
+        f"https://hg-be-iceman-prod-cmb0g2c9g6fqadgs.swedencentral-01.azurewebsites.net/api/tracker/getNearestStops"
         f"?minLong={longitude - r}&minLat={latitude - r}"
         f"&maxLong={longitude + r}&maxLat={latitude + r}&limit=1"
     )
     async with session.get(url) as resp:
+        if resp.status != 200:
+            raise ValueError(f"API returned HTTP {resp.status}")
         data = await resp.json()
         stops = data.get("data", [])
         if not stops:
@@ -44,14 +46,14 @@ async def _get_nearest_stop(session, latitude, longitude):
 
 
 async def _get_sales_info(session, stop_id):
-    url = f"https://iceman-prod.azurewebsites.net/api/tracker/getSalesInfoByStop?stopId={stop_id}"
+    url = f"https://hg-be-iceman-prod-cmb0g2c9g6fqadgs.swedencentral-01.azurewebsites.net/api/tracker/getSalesInfoByStop?stopId={stop_id}"
     async with session.get(url) as resp:
         data = await resp.json()
         return replace_nulls_with_empty_string(data["data"])
 
 
 async def _get_eta(session, stop_id, route_id):
-    url = f"https://iceman-prod.azurewebsites.net/api/tracker/stopsEta?stopId={stop_id}&routeId={route_id}"
+    url = f"https://hg-be-iceman-prod-cmb0g2c9g6fqadgs.swedencentral-01.azurewebsites.net/api/tracker/stopsEta?stopId={stop_id}&routeId={route_id}"
     async with session.get(url) as resp:
         data = await resp.json()
         if data["data"] != "":
@@ -62,7 +64,7 @@ async def _get_eta(session, stop_id, route_id):
 
 
 async def _get_live_route_info(session, route_id):
-    url = f"https://iceman-prod.azurewebsites.net/api/tracker/liverouteinfo/{route_id}"
+    url = f"https://hg-be-iceman-prod-cmb0g2c9g6fqadgs.swedencentral-01.azurewebsites.net/api/tracker/liverouteinfo/{route_id}"
     async with session.get(url) as resp:
         data = await resp.json()
         if data["statusCode"] == 200:
@@ -75,7 +77,7 @@ async def _get_live_route_info(session, route_id):
 
 async def _get_next_times(session, stop_id, from_date, limit=20):
     url = (
-        f"https://iceman-prod.azurewebsites.net/api/tracker/getnexttimes"
+        f"https://hg-be-iceman-prod-cmb0g2c9g6fqadgs.swedencentral-01.azurewebsites.net/api/tracker/getnexttimes"
         f"?stopId={stop_id}&fromTime={from_date}&limit={limit}"
     )
     async with session.get(url) as resp:
@@ -86,7 +88,7 @@ async def _get_next_times(session, stop_id, from_date, limit=20):
 
 
 async def _get_route_forecast(session, route_id):
-    url = f"https://iceman-prod.azurewebsites.net/api/tracker/routeforecast/{route_id}"
+    url = f"https://hg-be-iceman-prod-cmb0g2c9g6fqadgs.swedencentral-01.azurewebsites.net/api/tracker/routeforecast/{route_id}"
     async with session.get(url) as resp:
         data = await resp.json()
         if data["statusCode"] == 200:
@@ -100,8 +102,16 @@ class HemglassCoordinator(DataUpdateCoordinator):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=UPDATE_INTERVAL)
         self._latitude = latitude
         self._longitude = longitude
+        self._last_known_data: dict | None = None
 
     async def _async_update_data(self) -> dict:
+        now = datetime.now(STOCKHOLM)
+        if self._last_known_data is not None:
+            downtime_start = now.replace(hour=3, minute=45, second=0, microsecond=0)
+            downtime_end = now.replace(hour=10, minute=30, second=0, microsecond=0)
+            if downtime_start <= now < downtime_end:
+                return self._last_known_data
+
         session = async_get_clientsession(self.hass)
 
         try:
@@ -174,4 +184,5 @@ class HemglassCoordinator(DataUpdateCoordinator):
                 "truckLocationUpdated": "", "truckIsOffTrack": "",
             })
 
+        self._last_known_data = result
         return result
