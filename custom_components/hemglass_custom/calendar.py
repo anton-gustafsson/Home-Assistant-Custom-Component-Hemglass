@@ -9,15 +9,14 @@ from .coordinator import HemglassCoordinator, DOMAIN, STOCKHOLM
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator: HemglassCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    async_add_entities([HemglassCalendar(coordinator, config_entry.data["name"])])
+    async_add_entities([HemglassCalendar(coordinator, config_entry.data["name"], config_entry.entry_id)])
 
 
 class HemglassCalendar(CoordinatorEntity, CalendarEntity):
 
-    def __init__(self, coordinator: HemglassCoordinator, name: str):
+    def __init__(self, coordinator: HemglassCoordinator, name: str, entry_id: str):
         super().__init__(coordinator)
-        d = coordinator.data
-        self._attr_unique_id = f"{DOMAIN}_calendar_{name}_{d['stopLat']}_{d['stopLong']}"
+        self._attr_unique_id = f"{DOMAIN}_calendar_{entry_id}"
         self._attr_name = name
 
     @property

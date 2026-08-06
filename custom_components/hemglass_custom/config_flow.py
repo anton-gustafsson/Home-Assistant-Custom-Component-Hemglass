@@ -10,7 +10,7 @@ from homeassistant import config_entries, exceptions
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-DOMAIN = "hemglass"
+DOMAIN = "hemglass_custom"
 _LOGGER = logging.getLogger(__name__)
 
 async def validate_input(hass: HomeAssistant, data: dict) -> dict[str, Any]:

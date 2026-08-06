@@ -11,18 +11,17 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     coordinator: HemglassCoordinator = hass.data[DOMAIN][config_entry.entry_id]
     name = config_entry.data["name"]
     async_add_entities([
-        HemglassSensor(coordinator, name),
-        HemglassTruckSensor(coordinator, name),
-        HemglassDaysUntilSensor(coordinator, name),
+        HemglassSensor(coordinator, name, config_entry.entry_id),
+        HemglassTruckSensor(coordinator, name, config_entry.entry_id),
+        HemglassDaysUntilSensor(coordinator, name, config_entry.entry_id),
     ])
 
 
 class HemglassSensor(CoordinatorEntity, Entity):
 
-    def __init__(self, coordinator: HemglassCoordinator, name: str):
+    def __init__(self, coordinator: HemglassCoordinator, name: str, entry_id: str):
         super().__init__(coordinator)
-        d = coordinator.data
-        self._attr_unique_id = f"{DOMAIN}_{name}_{d['stopLat']}_{d['stopLong']}"
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}"
         self._name = name
         self._icon = "mdi:calendar"
 
@@ -66,9 +65,9 @@ class HemglassSensor(CoordinatorEntity, Entity):
 
 class HemglassTruckSensor(CoordinatorEntity, Entity):
 
-    def __init__(self, coordinator: HemglassCoordinator, name: str):
+    def __init__(self, coordinator: HemglassCoordinator, name: str, entry_id: str):
         super().__init__(coordinator)
-        self._attr_unique_id = f"{DOMAIN}_{coordinator.data['routeId']}_truck"
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_truck"
         self._name = f"{name} Truck"
         self._icon = "mdi:calendar"
 
@@ -99,10 +98,9 @@ class HemglassTruckSensor(CoordinatorEntity, Entity):
 
 class HemglassDaysUntilSensor(CoordinatorEntity, Entity):
 
-    def __init__(self, coordinator: HemglassCoordinator, name: str):
+    def __init__(self, coordinator: HemglassCoordinator, name: str, entry_id: str):
         super().__init__(coordinator)
-        d = coordinator.data
-        self._attr_unique_id = f"{DOMAIN}_{name}_{d['stopLat']}_{d['stopLong']}_days_until"
+        self._attr_unique_id = f"{DOMAIN}_{entry_id}_days_until"
         self._name = f"{name} Days Until"
         self._icon = "mdi:calendar-clock"
 

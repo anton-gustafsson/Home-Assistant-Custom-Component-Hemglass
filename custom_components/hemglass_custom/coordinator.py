@@ -8,7 +8,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 _LOGGER = logging.getLogger(__name__)
 STOCKHOLM = timezone("Europe/Stockholm")
-DOMAIN = "hemglass"
+DOMAIN = "hemglass_custom"
 UPDATE_INTERVAL = timedelta(minutes=5)
 
 
@@ -159,6 +159,13 @@ class HemglassCoordinator(DataUpdateCoordinator):
             result["futureDates"] = await _get_next_times(session, stop_id, date.today().isoformat())
         except Exception:
             result["futureDates"] = []
+
+        # getNearestStops' own nextDate can lag behind (it's not always
+        # refreshed right after a visit happens), while getnexttimes is
+        # queried from today and reflects the true upcoming visit. Prefer
+        # it so sensors never show a stale/past date.
+        if result["futureDates"]:
+            result["nextDate"] = result["futureDates"][0]
 
         try:
             live = await _get_live_route_info(session, route_id)
